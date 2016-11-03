@@ -1,9 +1,17 @@
 /**
  * \file sim.cpp
  *
- * \brief Source code for the ExtremeGreen 2014 paper.
+ * \brief Source code for the (Guazzone,2014) paper.
  *
  * \author Marco Guazzone (marco.guazzone@gmail.com)
+ *
+ * References:
+ * - (Guazzone,2014)
+ *   Marco Guazzone, Cosimo Anglano and Matteo Sereno.
+ *   A Game-Theoretic Approach to Coalition Formation in Green Cloud Federations
+ *   Proc. of the 14th IEEE/ACM International Symposium on Cluster, Cloud and Grid Computing (CCGrid), pp. 618-625, 2014.
+ *   doi:[10.1109/CCGrid.2014.37](http://dx.doi.org/10.1109/CCGrid.2014.37).
+ * .
  *
  * <hr/>
  *
@@ -55,15 +63,6 @@
 #include <stdexcept>
 #include <utility>
 #include <vector>
-
-
-//#define CIP1 0
-//#define CIP2 1
-//#define CIP3 2
-//#define CIP12 3
-//#define CIP13 4
-//#define CIP23 5
-//#define CIP123 6
 
 
 namespace alg = dcs::algorithm;
@@ -133,6 +132,7 @@ struct scenario
 	std::vector< std::vector<RealT> > cip_pm_asleep_costs; ///< Costs to switch-off PMs, per CIP and PM type ($/hour)
 	std::vector< std::vector<RealT> > cip_pm_awake_costs; ///< Costs to switch-on PMs, per CIP and PM type ($/hour)
 	std::vector< std::vector< std::vector<RealT> > > cip_to_cip_vm_migration_costs; ///< Costs to migrate VMs from a CIP to another CIP, per CIP and VM type ($/hour)
+	std::vector<RealT> cip_coalition_costs; ///< Cost due to form a coalition structure, per CIP
 	std::vector<RealT> pm_spec_min_powers; ///< Min power consumption per PM (in W)
 	std::vector<RealT> pm_spec_max_powers; ///< Max power consumption per PM (in W)
 	std::vector< std::vector<RealT> > vm_spec_cpus; ///< CPU share requirements per VM type and per PM type
@@ -553,6 +553,26 @@ scenario<RealT> make_scenario(std::string const& fname)
 						   DCS_EXCEPTION_THROW(std::runtime_error, "Malformed scenario file (']' is missing)"));
 			}
 		}
+		else if (boost::starts_with(line, "cip_coalition_costs"))
+		{
+			std::istringstream iss(line.substr(pos));
+
+			// Move to '='
+			iss.ignore(std::numeric_limits<std::streamsize>::max(), '=');
+			DCS_ASSERT(iss.good(),
+					   DCS_EXCEPTION_THROW(std::runtime_error, "Malformed scenario file ('=' is missing at line " + ::detail::util::to_string(lineno) + ")"));
+
+			// Move to '['
+			iss.ignore(std::numeric_limits<std::streamsize>::max(), '[');
+			DCS_ASSERT(iss.good(),
+					   DCS_EXCEPTION_THROW(std::runtime_error, "Malformed scenario file ('[' is missing at line " + ::detail::util::to_string(lineno) + ")"));
+
+			s.cip_coalition_costs.resize(s.num_cips);
+			for (std::size_t c = 0; c < s.num_cips; ++c)
+			{
+				iss >> s.cip_coalition_costs[c];
+			}
+		}
 		else if (boost::starts_with(line, "vm_spec_cpus"))
 		{
 			std::istringstream iss(line.substr(pos));
@@ -636,25 +656,25 @@ scenario<RealT> make_scenario(std::string const& fname)
 					   DCS_EXCEPTION_THROW(std::runtime_error, "Malformed scenario file ('[' is missing)"));
 
 			s.cip_to_cip_vm_migration_costs.resize(s.num_cips);
-			for (std::size_t c = 0; c < s.num_cips; ++c)
+			for (std::size_t c1 = 0; c1 < s.num_cips; ++c1)
 			{
 				// Move to '['
 				iss.ignore(std::numeric_limits<std::streamsize>::max(), '[');
 				DCS_ASSERT(iss.good(),
 						   DCS_EXCEPTION_THROW(std::runtime_error, "Malformed scenario file ('[' is missing)"));
 
-				s.cip_to_cip_vm_migration_costs.resize(s.num_cips);
-				for (std::size_t c = 0; c < s.num_cips; ++c)
+				s.cip_to_cip_vm_migration_costs[c1].resize(s.num_cips);
+				for (std::size_t c2 = 0; c2 < s.num_cips; ++c2)
 				{
 					// Move to '['
 					iss.ignore(std::numeric_limits<std::streamsize>::max(), '[');
 					DCS_ASSERT(iss.good(),
 							   DCS_EXCEPTION_THROW(std::runtime_error, "Malformed scenario file ('[' is missing)"));
 
-					s.cip_to_cip_vm_migration_costs[c].resize(s.num_vm_types);
-					for (std::size_t p = 0; p < s.num_pm_types; ++p)
+					s.cip_to_cip_vm_migration_costs[c1][c2].resize(s.num_vm_types);
+					for (std::size_t v = 0; v < s.num_vm_types; ++v)
 					{
-						iss >> s.cip_to_cip_vm_migration_costs[c][c][p];
+						iss >> s.cip_to_cip_vm_migration_costs[c1][c2][v];
 					}
 
 					// Move to ']'
@@ -704,6 +724,8 @@ scenario<RealT> make_scenario(std::string const& fname)
 			   DCS_EXCEPTION_THROW(std::runtime_error, "Unexpected number of VM RAM share requirements"));
 	DCS_ASSERT(s.cip_to_cip_vm_migration_costs.size() == 0 || s.num_cips == s.cip_to_cip_vm_migration_costs.size(),
 			   DCS_EXCEPTION_THROW(std::runtime_error, "Unexpected number of CIP-to-CIP VM migration costs"));
+	DCS_ASSERT(s.cip_coalition_costs.size() == 0 || s.num_cips ==  s.cip_coalition_costs.size(),
+			   DCS_EXCEPTION_THROW(std::runtime_error, "Unexpected number of providers in coalition costs by provider"));
 //	if (s.num_cips > 0)
 //	{
 //		DCS_ASSERT(s.cip_revenues[0].size() == 0 || s.num_vm_types == s.cip_revenues[0].size(),
@@ -778,6 +800,11 @@ scenario<RealT> make_scenario(std::string const& fname)
 				s.cip_to_cip_vm_migration_costs[c1][c2].assign(s.num_vm_types, 0);
 			}
 		}
+	}
+	if (s.cip_coalition_costs.size() == 0)
+	{
+		s.cip_coalition_costs.resize(s.num_cips);
+		std::fill(s.cip_coalition_costs.begin(), s.cip_coalition_costs.end(), 0);
 	}
 
 	return s;
@@ -957,17 +984,27 @@ std::basic_ostream<CharT,CharTraitsT>& operator<<(std::basic_ostream<CharT,CharT
 			}
 
 			os << "[";
-			for (std::size_t p = 0; p < s.num_pm_types; ++p)
+			for (std::size_t v = 0; v < s.num_vm_types; ++v)
 			{
-				if (p > 0)
+				if (v > 0)
 				{
 					os << ", ";
 				}
-				os << s.cip_to_cip_vm_migration_costs[c1][c2][p];
+				os << s.cip_to_cip_vm_migration_costs[c1][c2][v];
 			}
 			os << "]";
 		}
 		os << "]";
+	}
+	os << "]";
+	os << ", " << "cip_coalition_costs=[";
+	for (std::size_t c = 0; c < s.num_cips; ++c)
+	{
+		if (c > 0)
+		{
+			os << ", ";
+		}
+		os << s.cip_coalition_costs[c];
 	}
 	os << "]";
 	os << ", " << "vm_spec_cpus=[";
@@ -2369,10 +2406,22 @@ coalition_formation_info<RealT> analyze_coalitions(scenario<RealT> const& s, opt
 		visited_coalitions[cid].optimal_allocation = optimal_allocation;
 		if (optimal_allocation.solved)
 		{
-			game.value(cid, coal_profit-optimal_allocation.cost);
+			RealT coal_cost = 0;
+
+			if (coal_ncips > 1)
+			{
+				for (std::size_t c = 0; c < coal_ncips; ++c)
+				{
+					std::size_t cip = coal_cips[c];
+
+					coal_cost += s.cip_coalition_costs[cip];
+				}
+			}
+
+			game.value(cid, coal_profit-optimal_allocation.cost-coal_cost);
 			visited_coalitions[cid].value = game.value(cid);
 
-			DCS_DEBUG_TRACE( "CID: " << cid << " - Profit: " << coal_profit << " - Cost: " << optimal_allocation.cost << " => v(CID)=" << game.value(cid) );
+			DCS_DEBUG_TRACE( "CID: " << cid << " - Profit: " << coal_profit << " - Allocation Cost: " << optimal_allocation.cost << " - Coalition Cost: " << coal_cost << " => v(CID)=" << game.value(cid) );
 
 //#ifdef DCS_DEBUG
 			std::map< std::size_t, cip_allocation_info<RealT> > coal_cips_info;
@@ -3062,21 +3111,22 @@ void run_experiment(scenario<RealT> const& scen, options<RealT> const& opts)
 		}
 		if (opts.rnd_gen_pm_on_off_costs)
 		{
-			// We assume the switch-on/off cost is randomly distributed as a Normal(300,50) microsec.
+			// We assume the switch-on/off time is randomly distributed as a
+			// Normal(300,50) microsec.
 			// Such values are taken from [1].
-			// Furthermore, we assume the switch-on cost is equal to the switch-off cost and that is
-			// independent by the PM type
+			// Furthermore, we assume the switch-on cost is equal to the
+			// switch-off cost and that is independent by the PM type.
+			// Thus:
+			// - PM switch-on costs:
+			//     <max power consumption>*<Average time taken to perform a sleep-state to active-state transition>*<Electricity cost>
 			//
-			// - Costi switch-on degli host:
-			//     <Potenza elettrica max>*<Tempo medio per passare da sleep-state a active-state>*<Costo elettricità>
-			//
-			// - Costi switch-off degli host:
-			//     <Potenza elettrica max>*<Tempo Medio per passare da active-state a sleep-state>*<Costo elettricità>
+			// - PM switch-off costs:
+			//     <max power consumption>*<Average time taken to perform a active-state to sleep-state transition>*<Electricity cost>
 			//
 			// References:
 			// 1. D. Meisner, B. Gold and T. Wenisch.
-			//    "PowerNap: Eliminating Server Idle Power."
-			//    In: Proc. of the ASPLOS 2009 
+			//    "PowerNap: Eliminating Server Idle Power,"
+			//    Proc. of the 14th ASPLOS, pp.205-216, 2009.
 
 			const RealT norm = 3600; // normalization constant (secs in a hour)
 			const RealT mu = 3e-4/norm; // Mean switch-on/off time: 300 microsec
@@ -3100,29 +3150,46 @@ void run_experiment(scenario<RealT> const& scen, options<RealT> const& opts)
 		}
 		if (opts.rnd_gen_vm_migration_costs)
 		{
-			// - Suppongo che il collegamento di rete fra i vari CP abbia la stessa velocità (ad es. 100Mbps).
+			// The cost for migrating a class-k VM from CIP1 to CIP2 is given by:
 			//
-			// - Latenza tra i vari CP: suppongo sia uguale per tutti i CP
+			//   <data transfer cost rate>*<data size to transfer>/<activation time>
 			//
-			// - Tempo medio per migrare una VM da CP1 a CP2:
-			//  - VM small: valore casuale Normale(277 sec, 182 sec)
-			//  - VM medium: come small, ma parametri raddoppiati
-			//  - VM large: come small ma parametri quadruplicati
-			//  I valori di VM small li ho presi da [2], in cui sono state fatte misurazioni per collegamenti di rete a 100 Mbps, 1 Gbps e 10Gbps. Quelli per le altre due classi di VM li ho inventati, supponendo che le due classi abbiano una dimensione da migrare doppia e quadrupla di quella di una VM small.
-			//  Ovviamente la migrazione tra due host di uno stesso CP ha costo zero
+			// where:
+			// - <data transfer cost rate>: is taken from Amazon EC2 data
+			//   transfer pricing [3] and set to 0.001 $/GB.
+			// - <data size to transfer>: we assume that data are
+			//   persistently transferred during the migration time at a fixed
+			//   data rate of 100Mbps.
+			//   Thus, if we continuously trasmit for T seconds over a 100Mbps
+			//   network, we are trasmitting 0.1*T Gbps (i.e., 0.1*T/8 GB/s) and
+			//   thus we'll pay 0.1*T*0.001/8 $.
+			//   The migration time is randomly generated according as follows:
+			//   * The migration time between two PMs of the same CIP is zero.
+			//   * For the smaller VM class, the migration time is randomly
+			//     generated according to a Normal(277 sec, 182 sec) probability
+			//     distribution, as found in [2].
+			//   * For larger VM classes, we use the same methodology used for
+			//     for the smaller VM class, but doubling the values of the
+			//     parameters values.
+			//   Thus:
+			//   * Migration time for VM small: Normal(277 sec, 182 sec).
+			//   * Migration time for VM medium: Normal(554, 364 sec)
+			//   * Migration time for VM large: Normal(1108 sec, 728 sec).
+			//   * ...
+			// - <activation time>: we assume that our algorithm activates every
+			//   12 hours.
 			//
-			// - Costo upload da CP1 a CP2:
-			//   Se assumo 0.01 $/GB (alla Amazon Data Transfer [3]), e quindi se trasmetto ininterroamente per T sec su una rete da 100Mbps, pagherò T*0.001 $
-			//
-			// - Costi migrazione VM di classe k da un host di CP1 a un host di CP2:
-			//     <Tempo medio di migrazione (e downtime) di una VM  di class k da CP1 a CP2>*<Costo di upload di CP1 verso CP2>
+			// Finally, since we're expressing the time in hours, time and data
+			// rate values must be suitably normalized to hours
+			// (i.e., t sec -> tn = t/3600 hour, and
+			// d bit/sec -> dn = d*3600 bit/hour).
 			//
 			// References:
 			// 2. S. Akoush, R. Sohan, A. Rice, A.W. Moore and Andy Hopper.
-			//    "Predicting the Performance of Virtual Machine Migration."
-			//    In Proc. of the MASCOTS 2010.
-			// 3. Amazon EC2
-			//    "Amazon EC2 Data Transfer Pricing",
+			//    "Predicting the Performance of Virtual Machine Migration,"
+			//    In Proc. of the 2010 IEEE MASCOTS, pp. 37-46, 2010.
+			// 3. Amazon EC2.
+			//    "Amazon EC2 Data Transfer Pricing,"
 			//    2013, Online: https://aws.amazon.com/ec2/pricing/#DataTransfer
 
 			const RealT norm = 3600; // normalization constant (secs in a hour)
@@ -3130,7 +3197,7 @@ void run_experiment(scenario<RealT> const& scen, options<RealT> const& opts)
 			const RealT sigma = 61/norm; // S.D. migration time: 182 sec
 			const RealT data_transfer_cost = 1e-5; // Data transfer cost per MB: 0.00001 $/MB
 			const RealT activation_time = 12; // The algorithm activates every 12 hours
-			const RealT data_rate = 12.5*norm; // Data rate: 12.5 MB/sec
+			const RealT data_rate = 12.5*norm; // Data rate: 12.5 MB/sec (100 Mbps)
 			const RealT transfer_cost_rate = data_transfer_cost*data_rate/activation_time; // Transfer cost rate in $/hour
 
 			wrk_scen.cip_to_cip_vm_migration_costs.resize(scen.num_cips);
@@ -3195,7 +3262,7 @@ void usage(char const* progname)
 			  << "Options:" << std::endl
 			  << " --csv <file>" << std::endl
 			  << "   Export all the analyzed coalition onto a CSV file." << std::endl 
-			  << " --formation {'nash'|'pareto'|'social'}" << std::endl
+			  << " --formation {'merge-split'|'nash'|'pareto'|'social'}" << std::endl
 			  << "   The coalition formation strategy. Can be one of the following:" << std::endl 
 			  << "   - 'merge-split': to form Merge/split-stable partitions" << std::endl
 			  << "   - 'nash': to form Nash-stable partitions" << std::endl
