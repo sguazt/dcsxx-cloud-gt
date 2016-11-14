@@ -26,6 +26,7 @@ Please, cite this code as follow (BibTex format):
 		month = {May},
 	}
 
+
 Overview
 --------
 
@@ -33,7 +34,7 @@ Federations among sets of Cloud Providers (CPs), whereby a set of CPs agree to m
 
 In (Guazzone,2014), we address the problem of federation formation for a set of CPs, whose solution is necessary to exploit the potential of cloud federations for the reduction of the energy bill.
 
- We devise an algorithm, based on cooperative game theory, that can be readily implemented in a distributed fashion, and that allows a set of CPs to cooperatively set up their federations in such a way that their individual profit is increased with respect to the case in which they work in isolation.
+We devise an algorithm, based on cooperative game theory, that can be readily implemented in a distributed fashion, and that allows a set of CPs to cooperatively set up their federations in such a way that their individual profit is increased with respect to the case in which they work in isolation.
 
 We show that, by using our algorithm and the proposed CPs' utility function, they are able to self-organize into Nash-stable federations and, by means of iterated executions, to adapt themselves to environmental changes.
 
